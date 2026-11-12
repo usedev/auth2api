@@ -1,3 +1,4 @@
+import { upstreamFetch } from "../../utils/proxy";
 import { PKCECodes, TokenData } from "../types";
 import { decodeJwtPayload } from "../../utils/jwt";
 import { timeout } from "../../utils/common";
@@ -109,7 +110,7 @@ export async function exchangeCodexCode(
 
   let resp: Response;
   try {
-    resp = await fetch(TOKEN_URL, {
+    resp = await upstreamFetch(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
@@ -138,7 +139,7 @@ export async function refreshCodexTokens(
   // (matches codex-rs/login/src/auth/manager.rs request_chatgpt_token_refresh).
   let resp: Response;
   try {
-    resp = await fetch(TOKEN_URL, {
+    resp = await upstreamFetch(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

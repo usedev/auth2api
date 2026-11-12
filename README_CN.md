@@ -17,6 +17,7 @@ auth2api 的定位很克制：
 - **轻量优先**：代码量小、依赖和运行逻辑都尽量简单
 - **多 provider 共存**：Claude OAuth、OpenAI Codex（ChatGPT）OAuth 与实验性 Cursor 本地登录态同时支持，按 provider 独立维护账号池、cooldown、token 刷新与统计
 - **多账号支持**：每个 provider 都可加载多个 OAuth token，具备粘性路由、自动故障转移和逐账号用量统计
+- **出站 IP 代理**：可统一配置 HTTP、HTTPS 或 SOCKS5 代理，覆盖各 provider 的上游请求、登录和 token 刷新
 - **OpenAI 兼容 API**：支持 `/v1/chat/completions`、`/v1/responses`、`/v1/models`
 - **Claude 原生透传**：支持 `/v1/messages` 与 `/v1/messages/count_tokens`
 - **适配 Claude Code**：兼容 `Authorization: Bearer` 和 `x-api-key`
@@ -33,7 +34,7 @@ auth2api 的定位很克制：
 ## 安装
 
 ```bash
-git clone https://github.com/AmazingAng/auth2api
+git clone https://github.com/usedev/auth2api
 cd auth2api
 npm install
 npm run build
@@ -98,6 +99,7 @@ node dist/index.js
 ```yaml
 host: "" # 绑定地址，空字符串表示 127.0.0.1
 port: 8317
+proxy-url: "" # 出站代理地址；空字符串表示直连
 
 auth-dir: "~/.auth2api" # OAuth token 存储目录
 
@@ -135,6 +137,33 @@ cloaking:
     agent-base-url: "https://api2.cursor.sh"
     api-base-url: "https://api2.cursor.sh"
 ```
+
+### 设置出站 IP 代理
+
+在 `config.yaml` 中设置 `proxy-url`，即可通过指定代理 IP 访问上游。此配置对所有 provider 和账号统一生效，覆盖 API 请求、模型列表查询、OAuth token 交换与刷新，以及 Cursor 的 HTTP/2 登录轮询。
+
+```yaml
+proxy-url: "http://127.0.0.1:7890"
+# 带代理账号密码：
+# proxy-url: "http://username:password@203.0.113.10:8080"
+# proxy-url: "https://username:password@proxy.example.com:8443"
+# SOCKS5：
+# proxy-url: "socks5://127.0.0.1:1080"
+# proxy-url: "socks5h://username:password@203.0.113.10:1080"
+```
+
+HTTP/HTTPS 代理需要支持 CONNECT。用户名或密码中的特殊字符需要 URL 编码，例如 `@` 写成 `%40`。将 `proxy-url` 留空或省略即可直连。请直接设置此 YAML 字段；auth2api 不读取 `HTTP_PROXY`、`HTTPS_PROXY` 或 `ALL_PROXY` 来选择代理。
+
+服务和 `--login` 都会读取此配置。修改后需要重启服务；使用自定义配置文件时，登录和启动应指定同一个路径：
+
+```bash
+node dist/index.js --config=/path/to/config.yaml --login --provider=codex
+node dist/index.js --config=/path/to/config.yaml
+```
+
+在浏览器中打开的授权页面使用浏览器自身的网络设置。
+
+Docker 中的 `127.0.0.1` 指向容器自身。使用 Docker Desktop 连接宿主机上的代理时，可以设置 `proxy-url: "http://host.docker.internal:7890"`，并确保代理允许容器访问。Linux Docker Engine 还需在 `docker-compose.yml` 的 `auth2api` 服务下添加 `extra_hosts: ["host.docker.internal:host-gateway"]`。
 
 ## 使用方法
 

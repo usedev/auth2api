@@ -1,3 +1,4 @@
+import { upstreamFetch } from "../utils/proxy";
 import { Request } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { Config } from "../config";
@@ -165,7 +166,7 @@ export async function callCodexResponses(
   }
 
   try {
-    return await fetch(url, {
+    return await upstreamFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),

@@ -1,3 +1,4 @@
+import { upstreamFetch } from "../utils/proxy";
 import { AccountManager } from "../accounts/manager";
 
 const BASE_URL = "https://chatgpt.com/backend-api";
@@ -57,7 +58,7 @@ async function fetchUpstream(
 
   let resp: Response;
   try {
-    resp = await fetch(url, {
+    resp = await upstreamFetch(url, {
       method: "GET",
       headers,
       signal: AbortSignal.timeout(10_000),

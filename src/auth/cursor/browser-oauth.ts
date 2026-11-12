@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
-import * as http2 from "node:http2";
 import { v4 as uuidv4 } from "uuid";
 import { TokenData } from "../types";
 import { decodeJwtPayload } from "../../utils/jwt";
 import { CURSOR_CLIENT_ID, DEFAULT_CURSOR_CLIENT_VERSION } from "./storage";
+import { connectUpstreamHttp2 } from "../../utils/proxy";
 
 /**
  * Cursor's browser OAuth uses a PKCE-style "deep control" flow (the same one
@@ -68,18 +68,24 @@ interface PollHttpResponse {
  * to HTTP/1.1 against api2.cursor.sh and surfacing as `fetch failed` after
  * the first attempt.
  */
-function http2Get(
+async function http2Get(
   url: string,
   headers: Record<string, string>,
   timeoutMs = 15000,
+  signal?: AbortSignal,
 ): Promise<PollHttpResponse> {
+  const startedAt = Date.now();
+  const parsed = new URL(url);
+  const client = await connectUpstreamHttp2(parsed.origin, {
+    timeoutMs,
+    signal,
+  });
   return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const client = http2.connect(parsed.origin);
     let settled = false;
     const cleanup = () => {
       clearTimeout(timer);
-      client.close();
+      signal?.removeEventListener("abort", onAbort);
+      client.destroy();
     };
     const finish = (fn: () => void) => {
       if (settled) return;
@@ -87,9 +93,16 @@ function http2Get(
       cleanup();
       fn();
     };
-    const timer = setTimeout(() => {
-      finish(() => reject(new Error("cursor auth/poll HTTP/2 request timed out")));
-    }, timeoutMs);
+    const timer = setTimeout(
+      () => {
+        finish(() =>
+          reject(new Error("cursor auth/poll HTTP/2 request timed out")),
+        );
+      },
+      Math.max(1, timeoutMs - (Date.now() - startedAt)),
+    );
+    const onAbort = () =>
+      finish(() => reject(new Error("cursor auth/poll aborted")));
 
     client.on("error", (err) => finish(() => reject(err)));
 
@@ -108,9 +121,13 @@ function http2Get(
     });
     req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
     req.on("end", () =>
-      finish(() => resolve({ status, body: Buffer.concat(chunks).toString("utf8") })),
+      finish(() =>
+        resolve({ status, body: Buffer.concat(chunks).toString("utf8") }),
+      ),
     );
-    req.end();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    else req.end();
   });
 }
 
@@ -129,12 +146,18 @@ export interface CursorPollResponse {
 }
 
 function base64UrlEncode(buf: Buffer): string {
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 export function generateCursorPkce(): CursorPkceParams {
   const verifier = base64UrlEncode(randomBytes(32));
-  const challenge = base64UrlEncode(createHash("sha256").update(verifier).digest());
+  const challenge = base64UrlEncode(
+    createHash("sha256").update(verifier).digest(),
+  );
   return { uuid: uuidv4(), verifier, challenge };
 }
 
@@ -185,7 +208,10 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export async function pollCursorAuthOnce(
   uuid: string,
   verifier: string,
-  options: Pick<CursorBrowserLoginOptions, "pollUrl" | "userAgent" | "fetchImpl"> = {},
+  options: Pick<
+    CursorBrowserLoginOptions,
+    "pollUrl" | "userAgent" | "fetchImpl" | "signal"
+  > = {},
 ): Promise<CursorPollResponse | null> {
   const url = new URL(options.pollUrl || DEFAULT_POLL_URL);
   url.searchParams.set("uuid", uuid);
@@ -199,11 +225,17 @@ export async function pollCursorAuthOnce(
     const resp = await options.fetchImpl(url.toString(), {
       method: "GET",
       headers: pollHeaders(options.userAgent),
+      signal: options.signal,
     });
     status = resp.status;
     bodyText = await resp.text().catch(() => "");
   } else {
-    const resp = await http2Get(url.toString(), pollHeaders(options.userAgent));
+    const resp = await http2Get(
+      url.toString(),
+      pollHeaders(options.userAgent),
+      15000,
+      options.signal,
+    );
     status = resp.status;
     bodyText = resp.body;
   }
@@ -211,7 +243,9 @@ export async function pollCursorAuthOnce(
   if (status === 404) return null; // Cursor returns 404 while waiting.
   if (status === 202) return null; // Some builds use 202 Accepted.
   if (status < 200 || status >= 300) {
-    throw new Error(`cursor auth/poll failed: HTTP ${status} ${bodyText.slice(0, 200)}`);
+    throw new Error(
+      `cursor auth/poll failed: HTTP ${status} ${bodyText.slice(0, 200)}`,
+    );
   }
   let parsed: any;
   try {
@@ -266,7 +300,8 @@ export async function pollCursorAuth(
   const interval = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const backoff = options.pollBackoff ?? DEFAULT_POLL_BACKOFF;
   const maxInterval = options.pollMaxIntervalMs ?? DEFAULT_POLL_MAX_INTERVAL_MS;
-  const deadline = Date.now() + (options.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS);
+  const deadline =
+    Date.now() + (options.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS);
   let current = interval;
   let consecutiveErrors = 0;
   while (true) {
@@ -293,13 +328,19 @@ export async function pollCursorAuth(
   }
 }
 
-function emailFromAuthId(authId: string | undefined, accessToken?: string): string {
+function emailFromAuthId(
+  authId: string | undefined,
+  accessToken?: string,
+): string {
   // authId is usually `provider|user_xxxx`. We don't get the email back from
   // poll(), so we derive a stable placeholder unless an id_token tells us
   // otherwise. Token storage uses the email as the file suffix.
   if (accessToken) {
     try {
-      const claims = decodeJwtPayload(accessToken) as { email?: string; sub?: string };
+      const claims = decodeJwtPayload(accessToken) as {
+        email?: string;
+        sub?: string;
+      };
       if (typeof claims.email === "string" && claims.email.length > 0) {
         return claims.email;
       }

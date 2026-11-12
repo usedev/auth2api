@@ -17,6 +17,7 @@ It is not trying to be a large multi-provider gateway. If you want a compact, un
 - **Lightweight by design** — small codebase, minimal moving parts
 - **Multiple providers, one proxy** — Claude OAuth, OpenAI Codex (ChatGPT) OAuth, and an experimental Cursor local-login provider coexist; per-provider account pools, cooldown, refresh, and stats
 - **Multi-account support** — load multiple OAuth tokens per provider with sticky routing, automatic failover, and per-account usage tracking
+- **Outbound IP proxy** — configure one HTTP, HTTPS, or SOCKS5 proxy for all upstream providers, including login and token refresh
 - **OpenAI-compatible API** — supports `/v1/chat/completions`, `/v1/responses`, and `/v1/models`
 - **Claude native passthrough** — supports `/v1/messages` and `/v1/messages/count_tokens`
 - **Claude Code friendly** — works with both `Authorization: Bearer` and `x-api-key`
@@ -33,7 +34,7 @@ It is not trying to be a large multi-provider gateway. If you want a compact, un
 ## Installation
 
 ```bash
-git clone https://github.com/AmazingAng/auth2api
+git clone https://github.com/usedev/auth2api
 cd auth2api
 npm install
 npm run build
@@ -98,6 +99,7 @@ Copy `config.example.yaml` to `config.yaml` and edit as needed:
 ```yaml
 host: "" # bind address, empty = 127.0.0.1
 port: 8317
+proxy-url: "" # outbound proxy URL; empty = direct connections
 
 auth-dir: "~/.auth2api" # where OAuth tokens are stored
 
@@ -135,6 +137,33 @@ cloaking:
     agent-base-url: "https://api2.cursor.sh"
     api-base-url: "https://api2.cursor.sh"
 ```
+
+### Outbound IP proxy
+
+Set `proxy-url` in `config.yaml` to route upstream traffic through a proxy IP. The setting is global for all providers and accounts, and covers API requests, model discovery, OAuth token exchange/refresh, and Cursor login polling over HTTP/2.
+
+```yaml
+proxy-url: "http://127.0.0.1:7890"
+# With proxy authentication:
+# proxy-url: "http://username:password@203.0.113.10:8080"
+# proxy-url: "https://username:password@proxy.example.com:8443"
+# SOCKS5:
+# proxy-url: "socks5://127.0.0.1:1080"
+# proxy-url: "socks5h://username:password@203.0.113.10:1080"
+```
+
+HTTP/HTTPS proxies must support CONNECT. Percent-encode special characters in the username or password, such as `@` as `%40`. Leave `proxy-url` empty or omit it to connect directly. Configure this YAML field explicitly; auth2api does not read `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY` to select a proxy.
+
+Both the server and `--login` read this setting. Restart the server after changing it; for a custom configuration file, use the same path for login and startup:
+
+```bash
+node dist/index.js --config=/path/to/config.yaml --login --provider=codex
+node dist/index.js --config=/path/to/config.yaml
+```
+
+The authorization page you open in a browser uses the browser's own network settings.
+
+In Docker, `127.0.0.1` refers to the container. To use a proxy running on the host with Docker Desktop, set `proxy-url: "http://host.docker.internal:7890"` and make sure the proxy accepts connections from the container. On Linux Docker Engine, also add `extra_hosts: ["host.docker.internal:host-gateway"]` under the `auth2api` service in `docker-compose.yml`.
 
 ## Usage
 

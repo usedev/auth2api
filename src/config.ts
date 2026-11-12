@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import yaml from "js-yaml";
+import { validateProxyUrl } from "./utils/proxy";
 
 /**
  * Cloaking configuration for request fingerprinting.
@@ -57,6 +58,8 @@ export interface Config {
   "auth-dir": string;
   "api-keys": Set<string>;
   "body-limit": string;
+  /** Global outbound proxy URL. Empty or omitted uses direct connections. */
+  "proxy-url"?: string;
   cloaking: CloakingConfig;
   timeouts: TimeoutConfig;
   stats: StatsConfig;
@@ -74,6 +77,7 @@ const DEFAULT_RAW: RawConfig = {
   "auth-dir": "~/.auth2api",
   "api-keys": [],
   "body-limit": "200mb",
+  "proxy-url": "",
   cloaking: {
     "cli-version": "2.1.88",
     entrypoint: "cli",
@@ -136,6 +140,7 @@ export function loadConfig(configPath?: string): Config {
   }
 
   raw.debug = normalizeDebugMode(raw.debug);
+  raw["proxy-url"] = validateProxyUrl(raw["proxy-url"]) || "";
 
   // Auto-generate API key if none configured
   if (!raw["api-keys"] || raw["api-keys"].length === 0) {

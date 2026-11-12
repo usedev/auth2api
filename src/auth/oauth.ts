@@ -1,3 +1,4 @@
+import { upstreamFetch } from "../utils/proxy";
 import { PKCECodes, TokenData } from "./types";
 import { timeout } from "../utils/common";
 import {
@@ -40,7 +41,7 @@ export async function exchangeCodeForTokens(
     throw new Error("OAuth state mismatch — possible CSRF attack");
   }
 
-  const resp = await fetch(TOKEN_URL, {
+  const resp = await upstreamFetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -71,7 +72,7 @@ export async function exchangeCodeForTokens(
 }
 
 export async function refreshTokens(refreshToken: string): Promise<TokenData> {
-  const resp = await fetch(TOKEN_URL, {
+  const resp = await upstreamFetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

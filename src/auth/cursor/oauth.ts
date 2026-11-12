@@ -1,10 +1,8 @@
+import { upstreamFetch } from "../../utils/proxy";
 import { TokenData } from "../types";
 import { decodeJwtPayload } from "../../utils/jwt";
 import { RefreshTokenExhaustedError } from "../refresh-errors";
-import {
-  CURSOR_CLIENT_ID,
-  DEFAULT_CURSOR_CLIENT_VERSION,
-} from "./storage";
+import { CURSOR_CLIENT_ID, DEFAULT_CURSOR_CLIENT_VERSION } from "./storage";
 
 const TOKEN_URL = "https://api2.cursor.sh/oauth/token";
 
@@ -57,7 +55,7 @@ export async function refreshCursorTokens(
   const clientId =
     previous.cursorClientId || process.env.CURSOR_CLIENT_ID || CURSOR_CLIENT_ID;
 
-  const resp = await fetch(TOKEN_URL, {
+  const resp = await upstreamFetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -74,7 +72,9 @@ export async function refreshCursorTokens(
 
   const data = (await resp.json()) as CursorRefreshResponse;
   if (data.shouldLogout || !data.access_token) {
-    throw new Error("Cursor refresh token is no longer valid; re-login in Cursor");
+    throw new Error(
+      "Cursor refresh token is no longer valid; re-login in Cursor",
+    );
   }
 
   return {

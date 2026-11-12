@@ -1,3 +1,4 @@
+import { upstreamFetch } from "../utils/proxy";
 import crypto from "crypto";
 import { Request } from "express";
 import { IncomingHttpHeaders } from "http";
@@ -235,7 +236,7 @@ export async function callAnthropicMessages(
     inferredBetasFromBody(body),
   );
 
-  const response = await fetch(url, {
+  const response = await upstreamFetch(url, {
     method: "POST",
     headers: newHeaders,
     body: JSON.stringify(body),
@@ -273,7 +274,7 @@ export async function callAnthropicCountTokens(
     inferredBetasFromBody(body),
   );
 
-  const response = await fetch(url, {
+  const response = await upstreamFetch(url, {
     method: "POST",
     headers: newHeaders,
     body: JSON.stringify(body),

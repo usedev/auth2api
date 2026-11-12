@@ -10,6 +10,7 @@ import { buildRegistry, ProviderRegistry } from "./providers/registry";
 import { createServer } from "./server";
 import { notifyServerReload } from "./utils/notify-reload";
 import { StatsRecorder } from "./stats/recorder";
+import { configureProxy } from "./utils/proxy";
 
 function prompt(question: string): Promise<string> {
   const rl = readline.createInterface({
@@ -142,11 +143,7 @@ async function doLogin(
   await notifyServerReload(config);
 }
 
-async function startServer(): Promise<void> {
-  const configPath = process.argv
-    .find((a) => a.startsWith("--config="))
-    ?.split("=")[1];
-  const config = loadConfig(configPath);
+async function startServer(config: Config): Promise<void> {
   const authDir = resolveAuthDir(config["auth-dir"]);
 
   const registry = buildRegistry(authDir);
@@ -211,6 +208,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const configPath = args.find((a) => a.startsWith("--config="))?.split("=")[1];
   const config = loadConfig(configPath);
+  configureProxy(config["proxy-url"]);
   const authDir = resolveAuthDir(config["auth-dir"]);
 
   if (args.includes("--login")) {
@@ -231,7 +229,7 @@ async function main(): Promise<void> {
       await doLogin(config, registry, providerId, manual);
     }
   } else {
-    await startServer();
+    await startServer(config);
   }
 }
 

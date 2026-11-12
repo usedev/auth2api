@@ -1,6 +1,17 @@
 host: ""
 port: 8317
 
+# Global outbound proxy for upstream APIs, OAuth token exchange/refresh,
+# and Cursor login polling. Empty = direct connections.
+# Supports http://, https://, socks5://, socks5h://, with optional user:password.
+# HTTP(S) proxies must support CONNECT. Restart the server after changing this.
+proxy-url: ""
+# proxy-url: "http://127.0.0.1:7890"
+# proxy-url: "http://username:password@203.0.113.10:8080"
+# proxy-url: "https://username:password@proxy.example.com:8443"
+# proxy-url: "socks5://127.0.0.1:1080"
+# proxy-url: "socks5h://username:password@203.0.113.10:1080"
+
 # Directory to store OAuth tokens
 auth-dir: "~/.auth2api"
 
@@ -13,9 +24,9 @@ body-limit: "200mb"
 
 # Upstream request timeouts
 timeouts:
-  messages-ms: 120000         # non-stream /v1/messages timeout
-  stream-messages-ms: 600000  # stream /v1/messages timeout, suitable for Claude Code long tasks
-  count-tokens-ms: 30000      # /v1/messages/count_tokens timeout
+  messages-ms: 120000 # non-stream /v1/messages timeout
+  stream-messages-ms: 600000 # stream /v1/messages timeout, suitable for Claude Code long tasks
+  count-tokens-ms: 30000 # /v1/messages/count_tokens timeout
 
 # Per-request call statistics. Aggregated by:
 #   - client (sha256(api-key))
