@@ -22,9 +22,16 @@
     }
     // Set true only when full account/plan/credit details are needed.
     var showDetails = false;
-    function shortTime(value) {
+    function resetLabel(value) {
       var formatted = beijingTime(value);
-      return formatted === "未知" ? "未知" : formatted.slice(5, 16);
+      if (formatted === "未知") return "重置时间未知";
+      var today = beijingTime(new Date(now).toISOString());
+      var prefix =
+        formatted.slice(0, 10) === today.slice(0, 10)
+          ? "今天 "
+          : formatted.slice(5, 10) + " ";
+      var label = prefix + formatted.slice(11, 16) + " 重置（北京）";
+      return Date.parse(value) <= now ? label + "，请刷新确认" : label;
     }
     var now = Date.now();
     function percent(value) {
@@ -54,12 +61,12 @@
       return { isValid: false, invalidMessage: "没有匹配的上游账号" };
     }
     var names = {
-      five_hour: "5 小时",
-      seven_day: "每周",
+      five_hour: "当前会话",
+      seven_day: "本周",
       seven_day_sonnet: "Sonnet 每周",
       seven_day_opus: "Opus 每周",
       seven_day_oauth_apps: "OAuth 应用每周",
-      seven_day_overage_included: "额外每周窗口",
+      seven_day_overage_included: "Fable",
     };
     var results = [];
     response.accounts.forEach(function (account, accountIndex) {
@@ -83,7 +90,8 @@
         return;
       }
       account.windows.forEach(function (window) {
-        var windowName = names[window.name] || window.name;
+        var windowName =
+          window.displayName || names[window.name] || window.name;
         var details = [
           windowName,
           "已用 " + percent(window.usedPercent),
@@ -92,6 +100,13 @@
           "重置时间: " + beijingTime(window.resetsAt),
           "账号: " + label,
         ];
+        var weeklyShare =
+          typeof window.allowancePercentOfWeekly === "number"
+            ? "最多占周额度 " + percent(window.allowancePercentOfWeekly)
+            : "";
+        if (weeklyShare) details.push(weeklyShare);
+        if (typeof window.usedPercentOfWeekly === "number")
+          details.push("已占周额度 " + percent(window.usedPercentOfWeekly));
         if (account.planType) details.push("订阅: " + account.planType);
         if (account.credits) {
           if (account.credits.unlimited === true) details.push("积分: 不限量");
@@ -117,18 +132,12 @@
             ? details.join("；")
             : [
                 "已用 " + percent(window.usedPercent),
-                countdown(window.resetsAt)
-                  .replace("后重置（查询时估算）", "后重置")
-                  .replace(/ 天 /g, "天")
-                  .replace(/ 小时 /g, "时")
-                  .replace(/ 分钟/g, "分"),
-                shortTime(window.resetsAt) + " 北京",
-                "更新 " +
-                  (beijingTime(account.fetchedAt) === "未知"
-                    ? "未知"
-                    : beijingTime(account.fetchedAt).slice(11, 16)) +
-                  (account.cached ? " 缓存" : ""),
-              ].join(" · "),
+                resetLabel(window.resetsAt),
+                weeklyShare,
+                account.cached ? "缓存" : "",
+              ]
+                .filter(Boolean)
+                .join(" · "),
         };
         if (result.isValid) {
           result.total = 100;

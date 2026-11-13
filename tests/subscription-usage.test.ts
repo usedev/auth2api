@@ -303,8 +303,8 @@ test("cc-switch extractor presents each window as percent and never fabricates m
     assert.equal(results[0].remaining, 75);
     assert.equal(results[0].unit, "%");
     assert.equal(results[0].total, 100);
-    assert.equal(results[0].planName, "5 小时 #1");
-    assert.match(results[0].extra, /更新 16:16/);
+    assert.equal(results[0].planName, "当前会话 #1");
+    assert.match(results[0].extra, /重置（北京）/);
     const dated = script.extractor({
       accounts: [
         {
@@ -323,8 +323,8 @@ test("cc-switch extractor presents each window as percent and never fabricates m
         },
       ],
     });
-    assert.match(dated[0].extra, /11-14 07:30 北京/);
-    assert.match(dated[0].extra, /更新 未知/);
+    assert.match(dated[0].extra, /07:30 重置（北京）/);
+    assert.doesNotMatch(dated[0].extra, /Invalid Date/);
     assert.equal(results[2].isValid, false);
     assert.equal(results[2].remaining, undefined);
     assert.equal(script.extractor({ accounts: [] }).isValid, false);
@@ -413,7 +413,7 @@ test("cc-switch details show countdowns, plans and credits without inventing res
   const show = (overrides: any = {}) =>
     script.extractor({ accounts: [{ ...account, ...overrides }] })[0];
   const result = show();
-  assert.match(result.planName, /^5 小时/);
+  assert.match(result.planName, /^当前会话/);
   assert.match(result.extra, /已用 25.00%/);
   assert.match(result.extra, /剩余 75.00%/);
   assert.match(result.extra, /3 小时 后重置（查询时估算）/);
@@ -474,11 +474,71 @@ test("cc-switch compact layout keeps each line short and omits repeated account 
       },
     ],
   })[0];
-  assert.equal(row.planName, "5 小时");
-  assert.equal(
-    row.extra,
-    "已用 25.00% · 3时5分后重置 · 11-13 19:30 北京 · 更新 16:25 缓存",
-  );
+  assert.equal(row.planName, "当前会话");
+  assert.equal(row.extra, "已用 25.00% · 今天 19:30 重置（北京） · 缓存");
   assert.ok(row.extra.length < 70);
   assert.doesNotMatch(row.extra, /example.com|剩余|2026/);
+});
+
+test("Anthropic limits merges legacy windows and exposes scoped Fable shares by original index", () => {
+  const data = {
+    five_hour: { utilization: 25 },
+    seven_day: { utilization: 51 },
+    seven_day_overage_included: { utilization: 99 },
+    limits: [
+      { kind: "session", percent: 26, is_active: false },
+      { kind: "weekly_all", percent: 52, is_active: false },
+      null,
+      {
+        kind: "weekly_scoped",
+        percent: 100,
+        resets_at: "2026-11-13T08:59:59.797318+00:00",
+        scope: { model: { id: null, display_name: "Fable" }, surface: null },
+        is_active: true,
+      },
+      {
+        kind: "weekly_scoped",
+        percent: null,
+        scope: { model: { display_name: "Future model" } },
+      },
+    ],
+    weekly_scoped_shares: [
+      {
+        limit_index: 3,
+        used_percent_of_weekly: 50,
+        allowance_percent_of_weekly: 50,
+      },
+    ],
+  };
+  const windows = parseUsage("anthropic", data);
+  assert.equal(windows.length, 4);
+  assert.equal(windows[0].usedPercent, 26);
+  assert.equal(windows[1].usedPercent, 52);
+  const fable = windows[2];
+  assert.equal(fable.displayName, "Fable");
+  assert.equal(fable.usedPercent, 100);
+  assert.equal(fable.remainingPercent, 0);
+  assert.equal(fable.allowancePercentOfWeekly, 50);
+  assert.equal(fable.usedPercentOfWeekly, 50);
+  assert.equal(fable.resetsAt, "2026-11-13T08:59:59.797Z");
+  assert.equal(windows[3].usedPercent, null);
+  assert.equal(windows[3].allowancePercentOfWeekly, undefined);
+  const modern = parseUsage("anthropic", {
+    limits: data.limits,
+    weekly_scoped_shares: data.weekly_scoped_shares,
+  });
+  assert.deepEqual(modern, windows);
+  const source = fs.readFileSync(
+    path.join(__dirname, "../examples/cc-switch-usage.js"),
+    "utf8",
+  );
+  const script = vm.runInNewContext(source);
+  const rows = script.extractor({
+    accounts: [{ provider: "anthropic", email: "a", supported: true, windows }],
+  });
+  assert.equal(rows[2].planName, "Fable");
+  assert.equal(rows[2].remaining, 0);
+  assert.match(rows[2].extra, /已用 100.00%/);
+  assert.match(rows[2].extra, /最多占周额度 50.00%/);
+  assert.equal(rows[3].isValid, false);
 });

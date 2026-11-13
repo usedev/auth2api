@@ -347,7 +347,7 @@ curl 'http://127.0.0.1:8317/admin/usage?provider=codex' \
 
 可选参数：`provider=codex|anthropic|cursor`、`email=<URL 编码的账号邮箱>`、`refresh=true`（跳过缓存）。省略筛选时查询全部账号，包括冷却中的账号。未知参数、空筛选值及 provider/账号不匹配会直接拒绝；发送前还会校验账号池、账号及凭据的 provider 一致性，校验失败不会请求上游。
 
-响应的 `accounts[]` 包含 `provider`、`email`、`supported`、`planType`、`fetchedAt`、`cached` 和 `windows[]`。每个窗口有 `name`、`usedPercent`、`remainingPercent`、`windowSeconds` 和 UTC ISO 格式的 `resetsAt`。Codex 根据实际窗口长度识别 5 小时/每周窗口，并返回额外模型窗口及上游提供的 `credits`。未知数值为 `null`，不存在的窗口不返回；百分比不是美元余额或剩余 token 数。
+响应的 `accounts[]` 包含 `provider`、`email`、`supported`、`planType`、`fetchedAt`、`cached` 和 `windows[]`。每个窗口有 `name`、`usedPercent`、`remainingPercent`、`windowSeconds` 和 UTC ISO 格式的 `resetsAt`。Codex 根据实际窗口长度识别 5 小时/每周窗口，并返回额外模型窗口及上游提供的 `credits`。Anthropic 同时兼容旧窗口字段及新版 `limits[]`，合并当前会话/本周窗口，保留 Fable 等模型窗口；`displayName` 为上游模型名称，`allowancePercentOfWeekly` 和 `usedPercentOfWeekly` 来自 `weekly_scoped_shares`，分别表示可占及已占每周总额度的百分比。未知数值为 `null`，不存在的窗口不返回；百分比不是美元余额或剩余 token 数。
 
 查询失败在对应账号的 `error` 中返回（例如 `unauthenticated`、`forbidden`、`rate_limited`），不会使其他账号的结果丢失。成功结果缓存 60 秒，错误缓存 15 秒，相同凭据的在途请求会合并；每批最多查询 4 个账号，单次上游请求超时 20 秒。通过现有代理发送只读 GET 请求，不主动刷新 OAuth token、不修改账号调度/冷却、不消费重置额度。401 需检查授权或重新登录，403/429 不会自动重试。
 
@@ -359,7 +359,7 @@ curl 'http://127.0.0.1:8317/admin/usage?provider=codex' \
 4. 脚本默认查询 Claude（`provider=anthropic`）；Codex 改为 `provider=codex`。需要单个账号时追加 `&email=URL编码的邮箱`。
 5. 建议超时 30 秒、自动查询间隔 5 分钟；超过 4 个账号时建议按邮箱筛选，避免多批查询超过客户端超时。点击测试后保存。
 
-脚本默认使用紧凑布局：短窗口名、已用比例、倒计时、北京时间（月日/时分）和更新时间；多个账号以 #1、#2 区分。需要账号、订阅和积分等完整信息时，将脚本中的 `showDetails` 改为 `true`。每个账号的各窗口分别以 `%` 展示，附已用比例、重置倒计时、账号、北京时间（UTC+8）的重置时间和查询时间、缓存标记；订阅类型和积分余额仅在上游返回时展示。倒计时按脚本执行时刻估算，不会每秒更新；到期会提示刷新确认，不自动把剩余额度改为 100%。上游未返回数据或查询失败会明确显示错误，不会伪装成额度充足。本接口沿用现有 `/admin` 的 API key 权限；持有该 key 的客户端可以查询池内账号邮箱和额度。
+脚本默认使用紧凑布局：当前会话／本周／Fable（仅上游返回时）窗口名、已用比例和北京时间重置提示；多个账号以 #1、#2 区分。自定义模板的余额及进度条仍由 cc-switch 按剩余比例绘制。需要倒计时、更新时间、账号、订阅和积分等完整信息时，将脚本中的 `showDetails` 改为 `true`。每个账号的各窗口分别以 `%` 展示，附已用比例、重置倒计时、账号、北京时间（UTC+8）的重置时间和查询时间、缓存标记；订阅类型和积分余额仅在上游返回时展示。倒计时按脚本执行时刻估算，不会每秒更新；到期会提示刷新确认，不自动把剩余额度改为 100%。上游未返回数据或查询失败会明确显示错误，不会伪装成额度充足。本接口沿用现有 `/admin` 的 API key 权限；持有该 key 的客户端可以查询池内账号邮箱和额度。
 
 ### 在不停机的情况下重新登录
 

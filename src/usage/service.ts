@@ -10,6 +10,9 @@ export interface UsageWindow {
   remainingPercent: number | null;
   windowSeconds: number | null;
   resetsAt: string | null;
+  displayName?: string;
+  allowancePercentOfWeekly?: number;
+  usedPercentOfWeekly?: number;
 }
 export interface SubscriptionUsage {
   provider: ProviderId;
@@ -102,6 +105,61 @@ export function parseUsage(
       "seven_day_overage_included",
     ]) {
       add(name, data[name], name === "five_hour" ? 18000 : 604800, false);
+    }
+    // New responses expose model-specific limits only in limits[]. Keep the
+    // legacy windows as fallback and merge known equivalents without duplicates.
+    if (Array.isArray(data.limits)) {
+      data.limits.forEach((limit: any, index: number) => {
+        if (!limit || typeof limit !== "object") return;
+        const model = limit.scope?.model;
+        const displayName =
+          typeof model?.display_name === "string"
+            ? model.display_name.trim()
+            : "";
+        const legacyNames: Record<string, string> = {
+          fable: "seven_day_overage_included",
+          sonnet: "seven_day_sonnet",
+          opus: "seven_day_opus",
+        };
+        let name: string;
+        if (limit.kind === "session") name = "five_hour";
+        else if (limit.kind === "weekly_all") name = "seven_day";
+        else if (limit.kind === "weekly_scoped") {
+          // Surface-scoped limits must not overwrite a model-only window.
+          name =
+            !limit.scope?.surface &&
+            Object.hasOwn(legacyNames, displayName.toLowerCase())
+              ? legacyNames[displayName.toLowerCase()]
+              : `weekly_scoped_${index}`;
+        } else return;
+        const existing = windows.find((w) => w.name === name);
+        const used = number(limit.percent) ?? existing?.usedPercent ?? null;
+        const window: UsageWindow = {
+          name,
+          usedPercent: used,
+          remainingPercent:
+            used === null ? null : Math.max(0, Math.min(100, 100 - used)),
+          windowSeconds: name === "five_hour" ? 18000 : 604800,
+          resetsAt: iso(limit.resets_at) ?? existing?.resetsAt ?? null,
+        };
+        if (displayName) window.displayName = displayName;
+        if (
+          limit.kind === "weekly_scoped" &&
+          Array.isArray(data.weekly_scoped_shares)
+        ) {
+          const share = data.weekly_scoped_shares.find(
+            (s: any) => s && s.limit_index === index,
+          );
+          const allowance = number(share?.allowance_percent_of_weekly);
+          const weeklyUsed = number(share?.used_percent_of_weekly);
+          if (allowance !== null) window.allowancePercentOfWeekly = allowance;
+          if (weeklyUsed !== null) window.usedPercentOfWeekly = weeklyUsed;
+        }
+        // is_active is not an availability flag: normal session/weekly windows
+        // can have is_active=false while still carrying valid usage.
+        if (existing) Object.assign(existing, window);
+        else windows.push(window);
+      });
     }
   }
   return windows;
