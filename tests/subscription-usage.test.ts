@@ -280,7 +280,7 @@ test("cc-switch extractor presents each window as percent and never fabricates m
     );
     assert.equal(
       script.request.url,
-      "http://localhost:8317/admin/usage?provider=codex",
+      "http://localhost:8317/admin/usage?provider=anthropic",
     );
     const results = script.extractor({
       accounts: [
@@ -288,7 +288,7 @@ test("cc-switch extractor presents each window as percent and never fabricates m
           provider: "codex",
           email: "a",
           supported: true,
-          fetchedAt: "now",
+          fetchedAt: "2026-11-13T08:16:47.151Z",
           windows: parseUsage("codex", codexPayload),
         },
         {
@@ -303,7 +303,28 @@ test("cc-switch extractor presents each window as percent and never fabricates m
     assert.equal(results[0].remaining, 75);
     assert.equal(results[0].unit, "%");
     assert.equal(results[0].total, 100);
-    assert.match(results[0].extra, /重置时间/);
+    assert.equal(results[0].planName, "5 小时 #1");
+    assert.match(results[0].extra, /更新 16:16/);
+    const dated = script.extractor({
+      accounts: [
+        {
+          provider: "anthropic",
+          email: "a",
+          supported: true,
+          fetchedAt: "bad",
+          windows: [
+            {
+              name: "five_hour",
+              remainingPercent: 75,
+              usedPercent: 25,
+              resetsAt: "2026-11-13T23:30:00.002Z",
+            },
+          ],
+        },
+      ],
+    });
+    assert.match(dated[0].extra, /11-14 07:30 北京/);
+    assert.match(dated[0].extra, /更新 未知/);
     assert.equal(results[2].isValid, false);
     assert.equal(results[2].remaining, undefined);
     assert.equal(script.extractor({ accounts: [] }).isValid, false);
@@ -357,4 +378,107 @@ test("provider mismatch is rejected before cache lookup or any upstream request"
     globalThis.fetch = original;
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("cc-switch details show countdowns, plans and credits without inventing reset or balance", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../examples/cc-switch-usage.js"),
+    "utf8",
+  );
+  class FixedDate extends Date {
+    static now() {
+      return Date.parse("2026-11-13T08:30:00Z");
+    }
+  }
+  const script = vm.runInNewContext(
+    source.replace("var showDetails = false", "var showDetails = true"),
+    { Date: FixedDate },
+  );
+  const account = {
+    provider: "anthropic",
+    email: "a@test.local",
+    supported: true,
+    cached: true,
+    fetchedAt: "2026-11-13T08:29:00Z",
+    planType: "pro",
+    windows: [
+      {
+        name: "five_hour",
+        usedPercent: 25,
+        remainingPercent: 75,
+        resetsAt: "2026-11-13T11:30:00Z",
+      },
+    ],
+  };
+  const show = (overrides: any = {}) =>
+    script.extractor({ accounts: [{ ...account, ...overrides }] })[0];
+  const result = show();
+  assert.match(result.planName, /^5 小时/);
+  assert.match(result.extra, /已用 25.00%/);
+  assert.match(result.extra, /剩余 75.00%/);
+  assert.match(result.extra, /3 小时 后重置（查询时估算）/);
+  assert.match(result.extra, /2026-11-13 19:30:00（北京时间）/);
+  assert.match(result.extra, /账号: anthropic \/ a@test.local/);
+  assert.match(result.extra, /订阅: pro/);
+  assert.match(result.extra, /（缓存）/);
+  assert.doesNotMatch(result.extra, /积分/);
+  assert.match(show({ credits: { balance: "0.00" } }).extra, /积分余额: 0.00/);
+  assert.match(
+    show({ credits: { unlimited: true, balance: null } }).extra,
+    /积分: 不限量/,
+  );
+  for (const reset of ["2026-11-13T08:30:00Z", "2026-11-12T08:30:00Z"]) {
+    const old = show({ windows: [{ ...account.windows[0], resetsAt: reset }] });
+    assert.match(old.extra, /已到重置时间，请刷新确认/);
+    assert.equal(old.remaining, 75);
+  }
+  assert.match(
+    show({ windows: [{ ...account.windows[0], resetsAt: null }] }).extra,
+    /重置倒计时未知/,
+  );
+  assert.match(
+    show({
+      windows: [{ ...account.windows[0], resetsAt: "2026-11-14T10:31:00Z" }],
+    }).extra,
+    /1 天 2 小时 1 分钟后重置/,
+  );
+});
+
+test("cc-switch compact layout keeps each line short and omits repeated account and quota text", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../examples/cc-switch-usage.js"),
+    "utf8",
+  );
+  class FixedDate extends Date {
+    static now() {
+      return Date.parse("2026-11-13T08:25:00Z");
+    }
+  }
+  const script = vm.runInNewContext(source, { Date: FixedDate });
+  const row = script.extractor({
+    accounts: [
+      {
+        provider: "anthropic",
+        email: "long-email@example.com",
+        supported: true,
+        cached: true,
+        fetchedAt: "2026-11-13T08:25:00Z",
+        windows: [
+          {
+            name: "five_hour",
+            usedPercent: 25,
+            remainingPercent: 75,
+            resetsAt: "2026-11-13T11:30:00Z",
+          },
+        ],
+      },
+    ],
+  })[0];
+  assert.equal(row.planName, "5 小时");
+  assert.equal(
+    row.extra,
+    "已用 25.00% · 3时5分后重置 · 11-13 19:30 北京 · 更新 16:25 缓存",
+  );
+  assert.ok(row.extra.length < 70);
+  assert.doesNotMatch(row.extra, /example.com|剩余|2026/);
 });
