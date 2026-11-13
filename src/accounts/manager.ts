@@ -477,6 +477,14 @@ export class AccountManager {
     return acct.refreshPromise;
   }
 
+  /** Administrative lookup, including cooled-down accounts; does not affect routing. */
+  getAccountForUsage(email: string): AvailableAccount | null {
+    const account = this.accounts.get(email);
+    return account
+      ? buildAvailableAccount(this.authDir, email, account.token, this.provider)
+      : null;
+  }
+
   getSnapshots(): AccountSnapshot[] {
     const now = Date.now();
     const snapshots: AccountSnapshot[] = [];

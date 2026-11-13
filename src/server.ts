@@ -12,6 +12,7 @@ import {
   createCountTokensHandler,
 } from "./handlers/anthropic";
 import { StatsRecorder } from "./stats/recorder";
+import { SubscriptionUsageService, SubscriptionUsage } from "./usage/service";
 
 // Simple in-memory rate limiter per IP
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -47,6 +48,7 @@ export function createServer(
   statsRecorder?: StatsRecorder,
 ): express.Application {
   const app = express();
+  const subscriptionUsage = new SubscriptionUsageService(config);
 
   app.use(express.json({ limit: config["body-limit"] }));
 
@@ -208,6 +210,84 @@ export function createServer(
       ...statsRecorder.getSnapshot(),
       generated_at: new Date().toISOString(),
     });
+  });
+
+  app.get("/admin/usage", async (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    const { provider, email, refresh } = req.query;
+    if (
+      Object.keys(req.query).some(
+        (key) => !["provider", "email", "refresh"].includes(key),
+      ) ||
+      (provider !== undefined &&
+        (typeof provider !== "string" ||
+          !registry.all().some((p) => p.id === provider))) ||
+      (email !== undefined &&
+        (typeof email !== "string" ||
+          !email.trim() ||
+          email !== email.trim())) ||
+      (refresh !== undefined && refresh !== "true" && refresh !== "false")
+    ) {
+      res.status(400).json({
+        error: {
+          message: "Invalid provider, email or refresh query parameter",
+        },
+      });
+      return;
+    }
+    try {
+      const targets = registry
+        .all()
+        .filter((p) => !provider || p.id === provider)
+        .flatMap((p) =>
+          p.manager
+            .getSnapshots()
+            .filter((a) => !email || a.email === email)
+            .map((a) => ({ p, email: a.email })),
+        );
+      if (email && targets.length === 0) {
+        if (
+          provider &&
+          registry
+            .all()
+            .some((p) =>
+              p.manager.getSnapshots().some((a) => a.email === email),
+            )
+        ) {
+          res
+            .status(400)
+            .json({
+              error: {
+                code: "provider_mismatch",
+                message: "Account does not belong to the requested provider",
+              },
+            });
+          return;
+        }
+        res.status(404).json({ error: { message: "Account not found" } });
+        return;
+      }
+      const accounts: SubscriptionUsage[] = [];
+      for (let i = 0; i < targets.length; i += 4) {
+        accounts.push(
+          ...(await Promise.all(
+            targets
+              .slice(i, i + 4)
+              .map(({ p, email }) =>
+                subscriptionUsage.query(
+                  p.manager,
+                  p.id,
+                  email,
+                  refresh === "true",
+                ),
+              ),
+          )),
+        );
+      }
+      res.json({ accounts, generated_at: new Date().toISOString() });
+    } catch (err) {
+      next(err);
+    }
   });
 
   app.get("/admin/accounts", (_req, res) => {

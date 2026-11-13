@@ -336,6 +336,31 @@ curl http://127.0.0.1:8317/admin/accounts \
 
 每个账号 snapshot 包含:可用状态、cooldown 截止时间、失败计数、最近刷新时间、请求统计、按账号聚合的 token 用量(其中 `totalReasoningOutputTokens` 是 reasoning 模型如 `gpt-5.5` 隐藏推理消耗的 token,不计入可见输出)。Codex 账号还会带 `planType`(从 OAuth `id_token` 提取的 `"plus"`/`"pro"`/`"free"` 等)。如果 refresh token 被永久作废(`refresh_token_reused`/`expired`/`invalidated`),账号会进入 24 小时终态冷却,`lastError` 中会提示需要重新执行 `--login --provider=<provider>`。
 
+### 上游订阅额度与 cc-switch
+
+`GET /admin/usage` 查询上游订阅额度（不同于 `/admin/stats` 的本地 token 统计）。支持 Codex 和 Anthropic OAuth 账号，Cursor 返回 `unsupported`。
+
+```bash
+curl 'http://127.0.0.1:8317/admin/usage?provider=codex' \
+  -H 'Authorization: Bearer <your-api-key>'
+```
+
+可选参数：`provider=codex|anthropic|cursor`、`email=<URL 编码的账号邮箱>`、`refresh=true`（跳过缓存）。省略筛选时查询全部账号，包括冷却中的账号。未知参数、空筛选值及 provider/账号不匹配会直接拒绝；发送前还会校验账号池、账号及凭据的 provider 一致性，校验失败不会请求上游。
+
+响应的 `accounts[]` 包含 `provider`、`email`、`supported`、`planType`、`fetchedAt`、`cached` 和 `windows[]`。每个窗口有 `name`、`usedPercent`、`remainingPercent`、`windowSeconds` 和 UTC ISO 格式的 `resetsAt`。Codex 根据实际窗口长度识别 5 小时/每周窗口，并返回额外模型窗口及上游提供的 `credits`。未知数值为 `null`，不存在的窗口不返回；百分比不是美元余额或剩余 token 数。
+
+查询失败在对应账号的 `error` 中返回（例如 `unauthenticated`、`forbidden`、`rate_limited`），不会使其他账号的结果丢失。成功结果缓存 60 秒，错误缓存 15 秒，相同凭据的在途请求会合并；每批最多查询 4 个账号，单次上游请求超时 20 秒。通过现有代理发送只读 GET 请求，不主动刷新 OAuth token、不修改账号调度/冷却、不消费重置额度。401 需检查授权或重新登录，403/429 不会自动重试。
+
+**cc-switch 配置：**
+
+1. 启用用量查询，选择「自定义」。
+2. 将 [examples/cc-switch-usage.js](examples/cc-switch-usage.js) 的全部内容粘贴到提取器代码中。
+3. API Key 填 auth2api 的 API key（可留空沿用供应商配置）；请求地址填 auth2api 地址，例如 `http://127.0.0.1:8317`，也兼容末尾 `/v1`。
+4. 脚本默认查询 Codex；Claude 改为 `provider=anthropic`。需要单个账号时追加 `&email=URL编码的邮箱`。
+5. 建议超时 30 秒、自动查询间隔 5 分钟；超过 4 个账号时建议按邮箱筛选，避免多批查询超过客户端超时。点击测试后保存。
+
+每个账号的各窗口分别以 `%` 展示，附重置时间和查询时间。上游未返回数据或查询失败会明确显示错误，不会伪装成额度充足。本接口沿用现有 `/admin` 的 API key 权限；持有该 key 的客户端可以查询池内账号邮箱和额度。
+
 ### 在不停机的情况下重新登录
 
 服务运行中跑 `--login` 会写入新 token 文件并**自动通知运行中的服务**(POST `/admin/reload`),新 token 立刻生效,不必重启。对 codex provider 尤其重要:OpenAI 每次刷新都会轮转 refresh token,如果不重载,运行中的服务还在用旧的 refresh token,刷新会被后端识别为 `refresh_token_reused`,导致账号进入终态冷却。

@@ -336,6 +336,21 @@ Response shape (one entry per logged-in provider):
 
 Each account snapshot carries availability, cooldown, failure counters, last refresh time, request statistics, and per-account token usage including `totalReasoningOutputTokens` (reasoning models like `gpt-5.5` consume hidden reasoning tokens that aren't part of the visible output). Codex accounts also carry `planType` (e.g. `"plus"` / `"pro"` / `"free"`) extracted from the OAuth `id_token`. If a refresh token was permanently invalidated (`refresh_token_reused`/`expired`/`invalidated`), the account enters a 24-hour terminal cooldown with `lastError` set to a message pointing at `--login --provider=<provider>` for re-authorization.
 
+### Upstream subscription usage and cc-switch
+
+`GET /admin/usage` queries upstream subscription limits for Codex and Anthropic OAuth accounts, separately from local `/admin/stats` token accounting. Cursor returns `unsupported`.
+
+```bash
+curl 'http://127.0.0.1:8317/admin/usage?provider=codex' \
+  -H 'Authorization: Bearer <your-api-key>'
+```
+
+Optional filters: `provider=codex|anthropic|cursor`, `email=<URL-encoded email>`, and `refresh=true` to bypass the cache. Without filters, all accounts are queried, including accounts in cooldown. Unknown parameters, empty filters, and mismatched provider/account selections are rejected. Account-pool, account, and credential providers must match before any upstream request. The `accounts[]` response contains `provider`, `email`, `supported`, `planType`, `fetchedAt`, `cached`, and `windows[]`. Windows expose `name`, `usedPercent`, `remainingPercent`, `windowSeconds`, and UTC ISO `resetsAt`. Codex window names follow actual durations, including additional feature limits; `credits` is returned when provided upstream. Missing values stay `null`; absent windows are omitted. Percentages are not dollar balances or remaining token counts.
+
+Failures are isolated in each account's `error`. Successes are cached for 60 seconds, errors for 15 seconds, and concurrent requests for the same credentials share one request. Queries run in batches of four with a 20-second upstream timeout. These are read-only GET requests through the configured proxy: they do not refresh OAuth tokens, change routing/cooldown, or consume reset credits. A 401 requires checking account authorization; 403/429 responses are not retried.
+
+For cc-switch, enable usage queries, choose **Custom**, and paste [examples/cc-switch-usage.js](examples/cc-switch-usage.js). Use your auth2api API key and base URL (a trailing `/v1` is accepted). The script defaults to `provider=codex`; change it to `provider=anthropic` for Claude, or append `&email=<URL-encoded email>` for one account. Set a 30-second timeout and a five-minute refresh interval. Filter by email for large pools to avoid multiple batches exceeding the client timeout. Each window is displayed separately in `%`, with reset and fetch timestamps; missing data and upstream errors are explicitly reported. This endpoint inherits existing admin API-key access, including visibility of pool account emails and quotas.
+
 ### Re-authenticating without restart
 
 Running `--login` while the server is up writes a new token file and **automatically notifies the running server** (via `POST /admin/reload`) so the new token takes effect immediately — no restart needed. This is especially important for the codex provider: OpenAI rotates the refresh token on every refresh, so leaving the server running with a stale refresh token while you re-auth would otherwise put the account into a `refresh_token_reused` terminal cooldown.
