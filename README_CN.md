@@ -371,6 +371,8 @@ curl 'http://127.0.0.1:8317/admin/usage?provider=codex' \
 
 查询：`GET /admin/reset-credits?provider=anthropic&email=<URL编码邮箱>`。请求上游 `GET /api/oauth/usage?cedar_ember=1&skip_spend=1`，返回 `heldCount`（有效持有次数）、`availableCount`（此刻可兑换次数）和 `credits[]`。每张卡包含名称、剩余次数、开始/过期时间、重置范围及 `redeemable`；只有满足上游资格、未过期、未暂停、无阻塞/冷却且为上游 next grant 的卡才会附带 5 分钟有效的 `confirmationToken`。两种次数口径不同，不把“持有”伪装成“立即可用”。账号需具备上游 OAuth profile 权限；已有凭据未存储 scope，由上游鉴权决定是否可访问。
 
+单次 `POST /admin/reset-credits/redeem-next` 自动查询并兑换。JSON 只包含 `provider: "anthropic"`、`email`、`confirm: true`，请求头必须提供 16–128 位字母/数字/下划线/连字符组成的 `Idempotency-Key`。服务器把操作编号绑定 API key、账号及自动选择的唯一可用卡，并在兑换前持久化确认映射。同编号重试不重新选卡、不再次消费；无卡的拒绝也会记录。编号冲突、并发/中断、过期、资格变化或结果不明均不会自动重试。新一次人工兑换才使用新编号，不能用新编号绕过未知结果锁。此功能不会加入 cc-switch 的查询脚本。完整单 curl 见上方示例文档。
+
 **兑换会真实消耗一张卡**：人工核对查询结果的账号、卡片和 `clears` 后，使用同一个 API key 调用 `POST /admin/reset-credits/redeem`，JSON 请求体必须为：
 
 ```json

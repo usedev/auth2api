@@ -471,3 +471,257 @@ test("usage can include reset cards and rejects cross-provider card queries", as
     f.cleanup();
   }
 });
+
+test("one-step reset selects once and replays across restart without another upstream request", async () => {
+  const f = fixture(),
+    original = globalThis.fetch;
+  globalThis.fetch = f.fetcher;
+  try {
+    const key = "reset-20261114-001";
+    const result = await f.service.redeemNext("a@test.local", "actor", key);
+    assert.equal(result.outcome, "reset");
+    assert.equal(f.calls.filter((c) => c.init?.method === "POST").length, 1);
+    const count = f.calls.length;
+    const restart = new ClaudeResetService(f.config, f.manager, f.dir);
+    const replay = await restart.redeemNext("a@test.local", "actor", key);
+    assert.equal(replay.outcome, "reset");
+    assert.equal(replay.replayed, true);
+    assert.equal(f.calls.length, count);
+    await assert.rejects(
+      restart.redeemNext("b@test.local", "actor", key),
+      (e: any) => e.code === "idempotency_mismatch",
+    );
+    await assert.rejects(
+      restart.redeemNext("a@test.local", "other", key),
+      (e: any) => e.code === "idempotency_mismatch",
+    );
+    assert.equal(f.calls.length, count);
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /full_reset|fake-access|confirmationToken/,
+    );
+  } finally {
+    globalThis.fetch = original;
+    f.cleanup();
+  }
+});
+
+test("concurrent one-step requests with one key consume at most one card", async () => {
+  const f = fixture(),
+    original = globalThis.fetch;
+  globalThis.fetch = f.fetcher;
+  try {
+    const key = "reset-concurrent-001";
+    const results = await Promise.allSettled([
+      f.service.redeemNext("a@test.local", "actor", key),
+      f.service.redeemNext("a@test.local", "actor", key),
+    ]);
+    assert.ok(
+      results.some(
+        (r) => r.status === "fulfilled" && r.value.outcome === "reset",
+      ),
+    );
+    assert.equal(f.calls.filter((c) => c.init?.method === "POST").length, 1);
+    const count = f.calls.length;
+    assert.equal(
+      (await f.service.redeemNext("a@test.local", "actor", key)).replayed,
+      true,
+    );
+    assert.equal(f.calls.length, count);
+  } finally {
+    globalThis.fetch = original;
+    f.cleanup();
+  }
+});
+
+test("no-card one-step result stays rejected when cards later appear", async () => {
+  const f = fixture(),
+    original = globalThis.fetch;
+  globalThis.fetch = f.fetcher;
+  try {
+    const key = "reset-no-card-001",
+      available = f.getBlock();
+    f.setBlock(null);
+    await assert.rejects(
+      f.service.redeemNext("a@test.local", "actor", key),
+      (e: any) => e.code === "not_redeemable",
+    );
+    const count = f.calls.length;
+    f.setBlock(available);
+    const restart = new ClaudeResetService(f.config, f.manager, f.dir);
+    await assert.rejects(
+      restart.redeemNext("a@test.local", "actor", key),
+      (e: any) => e.code === "not_redeemable",
+    );
+    assert.equal(f.calls.length, count);
+    assert.equal(f.calls.filter((c) => c.init?.method === "POST").length, 0);
+  } finally {
+    globalThis.fetch = original;
+    f.cleanup();
+  }
+});
+
+test("unknown one-step outcome never reselects a card and stays locked under a new key", async () => {
+  const f = fixture(),
+    original = globalThis.fetch;
+  globalThis.fetch = f.fetcher;
+  try {
+    f.setOutcome(new Error("ambiguous POST"));
+    const key = "reset-timeout-001";
+    assert.equal(
+      (await f.service.redeemNext("a@test.local", "actor", key)).outcome,
+      "unknown",
+    );
+    const count = f.calls.length;
+    const restart = new ClaudeResetService(f.config, f.manager, f.dir);
+    assert.deepEqual(await restart.redeemNext("a@test.local", "actor", key), {
+      outcome: "unknown",
+      replayed: true,
+    });
+    assert.equal(f.calls.length, count);
+    await assert.rejects(
+      restart.redeemNext("a@test.local", "actor", "reset-timeout-002"),
+      (e: any) => e.code === "reset_locked",
+    );
+    assert.equal(f.calls.filter((c) => c.init?.method === "POST").length, 1);
+  } finally {
+    globalThis.fetch = original;
+    f.cleanup();
+  }
+});
+
+test("one-step mapping persistence failure cannot reach POST or silently retry", async () => {
+  const f = fixture(),
+    original = globalThis.fetch;
+  globalThis.fetch = f.fetcher;
+  try {
+    const actualSave = (f.service as any).save.bind(f.service);
+    (f.service as any).save = (file: string, data: any) => {
+      if (file.includes("one-step-") && data.state === "selected")
+        throw new Error("disk unavailable");
+      actualSave(file, data);
+    };
+    const key = "reset-storage-001";
+    await assert.rejects(f.service.redeemNext("a@test.local", "actor", key));
+    const count = f.calls.length;
+    const restart = new ClaudeResetService(f.config, f.manager, f.dir);
+    await assert.rejects(
+      restart.redeemNext("a@test.local", "actor", key),
+      (e: any) => e.code === "operation_unresolved",
+    );
+    assert.equal(f.calls.length, count);
+    assert.equal(f.calls.filter((c) => c.init?.method === "POST").length, 0);
+  } finally {
+    globalThis.fetch = original;
+    f.cleanup();
+  }
+});
+
+test("one-step recovers persisted receipt results after interrupted final operation save", async () => {
+  const f = fixture(),
+    original = globalThis.fetch;
+  globalThis.fetch = f.fetcher;
+  try {
+    const actualSave = (f.service as any).save.bind(f.service);
+    (f.service as any).save = (file: string, data: any) => {
+      if (file.includes("one-step-") && data.state === "complete")
+        throw new Error("disk unavailable");
+      actualSave(file, data);
+    };
+    const key = "reset-finished-001";
+    await assert.rejects(f.service.redeemNext("a@test.local", "actor", key));
+    assert.equal(f.calls.filter((c) => c.init?.method === "POST").length, 1);
+    const count = f.calls.length;
+    const restart = new ClaudeResetService(f.config, f.manager, f.dir);
+    const result = await restart.redeemNext("a@test.local", "actor", key);
+    assert.equal(result.outcome, "reset");
+    assert.equal(result.replayed, true);
+    assert.equal(f.calls.length, count);
+  } finally {
+    globalThis.fetch = original;
+    f.cleanup();
+  }
+});
+
+test("one-step HTTP requires explicit confirmation and valid idempotency key", async () => {
+  const f = fixture(),
+    original = globalThis.fetch;
+  globalThis.fetch = f.fetcher;
+  const server = http.createServer(createServer(f.config, f.registry));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/admin/reset-credits/redeem-next`;
+  const headers = {
+    Authorization: "Bearer test-key",
+    "Content-Type": "application/json",
+    "Idempotency-Key": "reset-http-test-001",
+  };
+  const body = { provider: "anthropic", email: "a@test.local", confirm: true };
+  try {
+    assert.equal(
+      (await original(url, { method: "POST", body: JSON.stringify(body) }))
+        .status,
+      401,
+    );
+    for (const key of ["", "short", "bad key with spaces", "a".repeat(129)]) {
+      assert.equal(
+        (
+          await original(url, {
+            method: "POST",
+            headers: { ...headers, "Idempotency-Key": key },
+            body: JSON.stringify(body),
+          })
+        ).status,
+        400,
+      );
+    }
+    for (const value of [
+      { ...body, confirm: false },
+      { ...body, provider: "codex" },
+      { ...body, confirmationToken: "a".repeat(64) },
+      { ...body, grant_id: "full_reset" },
+    ]) {
+      assert.equal(
+        (
+          await original(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(value),
+          })
+        ).status,
+        400,
+      );
+    }
+    assert.equal(
+      (
+        await original(url + "?email=b", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        })
+      ).status,
+      400,
+    );
+    assert.equal(f.calls.length, 0);
+    const r = await original(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("cache-control"), "no-store");
+    assert.equal(((await r.json()) as any).outcome, "reset");
+    const count = f.calls.length;
+    const replay = await original(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    assert.equal(((await replay.json()) as any).replayed, true);
+    assert.equal(f.calls.length, count);
+  } finally {
+    globalThis.fetch = original;
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    f.cleanup();
+  }
+});

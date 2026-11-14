@@ -10,6 +10,27 @@ API_KEY='你的auth2api API key'
 ACCOUNT_EMAIL='你的Claude账号邮箱'
 ```
 
+## 一个 curl 自动查询并兑换
+
+本版本新增一键兑换接口；现有两步接口仍可使用。
+
+不需要手动查询或传 `confirmationToken`。下面一个请求由服务器查询上游指定的下一张可用卡，自动生成、保存确认凭据并兑换一次。**调用会真实消耗一张卡，仅在你决定重置时手动执行。**
+
+```bash
+curl --fail-with-body --max-time 120 \
+  'http://180.93.164.112:8081/admin/reset-credits/redeem-next' \
+  -H 'Authorization: Bearer 你的auth2api_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: reset-20261114-001' \
+  --data '{"provider":"anthropic","email":"你的Claude账号邮箱","confirm":true}'
+```
+
+`Idempotency-Key` 是你本次兑换的操作编号，允许 16–128 个英文字母、数字、下划线或连字符。**同一次操作重试必须保持相同编号；确认需要新一次兑换时才更换编号。**不需要将任何查询结果复制进 curl，也不要在每次网络重试时生成新编号。
+
+同编号重复请求只返回原结果，不会选择新卡。没有可用卡也会记住拒绝结果，不会在卡片之后出现时自动兑换。并发/中断操作返回 `operation_unresolved`；超时或 HTTP 202 `unknown` 必须先核实，禁止换编号盲目重试。一个编号不可用于不同账号或 API key。
+
+## 保留的两步接口
+
 只读查询：
 
 ```bash

@@ -36,6 +36,15 @@ interface Outcome {
   cleared?: string[];
   replayed?: boolean;
 }
+interface OneStepOperation {
+  email: string;
+  actor: string;
+  created: number;
+  state: "preparing" | "selected" | "complete";
+  confirmationToken?: string;
+  result?: Outcome;
+  error?: { status: number; code: string; message: string };
+}
 interface Receipt {
   email: string;
   actor: string;
@@ -259,6 +268,146 @@ export class ClaudeResetService {
       credits,
       fetchedAt: new Date(now).toISOString(),
     };
+  }
+  /** One explicit request selects the upstream next grant and consumes at most
+   * one card. An operation key can never select a fresh card on replay. */
+  async redeemNext(
+    email: string,
+    actor: string,
+    operationKey: string,
+  ): Promise<Outcome> {
+    this.account(email);
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(operationKey))
+      fail(
+        400,
+        "invalid_idempotency_key",
+        "Idempotency-Key must contain 16-128 letters, digits, underscores or hyphens",
+      );
+    this.init();
+    const file = path.join(
+      this.directory,
+      "one-step-" + hash(operationKey) + ".json",
+    );
+    const operation: OneStepOperation = {
+      email,
+      actor,
+      created: Date.now(),
+      state: "preparing",
+    };
+    let fd: number;
+    try {
+      fd = fs.openSync(file, "wx", 0o600);
+    } catch (err: any) {
+      if (err?.code === "EEXIST") return this.replayOneStep(file, email, actor);
+      throw err;
+    }
+    // The exclusive record claims this operation before any upstream request.
+    // An interrupted or partial write is retained and fails closed on replay.
+    try {
+      fs.writeFileSync(fd, JSON.stringify(operation));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const dir = fs.openSync(this.directory, "r");
+    try {
+      fs.fsyncSync(dir);
+    } finally {
+      fs.closeSync(dir);
+    }
+    try {
+      const query = await this.query(email, actor);
+      const candidates = query.credits.filter(
+        (c) =>
+          c.redeemable === true &&
+          typeof c.confirmationToken === "string" &&
+          /^[a-f0-9]{64}$/.test(c.confirmationToken),
+      );
+      if (candidates.length === 0)
+        fail(409, "not_redeemable", "No reset credit is redeemable now");
+      if (candidates.length !== 1)
+        fail(
+          409,
+          "ambiguous_credit",
+          "More than one redeemable credit; use the explicit confirmation interface",
+        );
+      operation.confirmationToken = candidates[0].confirmationToken;
+      operation.state = "selected";
+      // Persist the exact account/card confirmation before the irreversible path.
+      this.save(file, operation);
+      const result = await this.redeem(
+        email,
+        actor,
+        operation.confirmationToken!,
+      );
+      operation.result = result;
+      operation.state = "complete";
+      this.save(file, operation);
+      return result;
+    } catch (err) {
+      // ResetError is an explicit pre-POST rejection. Transport and persistence
+      // ambiguity retains the selected operation and can never choose a new card.
+      if (err instanceof ResetError) {
+        operation.error = {
+          status: err.status,
+          code: err.code,
+          message: err.message,
+        };
+        operation.state = "complete";
+        this.save(file, operation);
+      }
+      throw err;
+    }
+  }
+  private replayOneStep(file: string, email: string, actor: string): Outcome {
+    let operation: OneStepOperation;
+    try {
+      operation = JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch {
+      fail(
+        409,
+        "operation_unresolved",
+        "Previous operation is incomplete; do not retry with another key before reconciliation",
+      );
+    }
+    if (operation.email !== email || operation.actor !== actor)
+      fail(
+        409,
+        "idempotency_mismatch",
+        "Idempotency-Key is already bound to another account or API key",
+      );
+    if (operation.result) return { ...operation.result, replayed: true };
+    if (operation.error)
+      fail(
+        operation.error.status,
+        operation.error.code,
+        operation.error.message,
+      );
+    if (
+      typeof operation.confirmationToken === "string" &&
+      /^[a-f0-9]{64}$/.test(operation.confirmationToken)
+    ) {
+      // A crash after redeem() persisted its result is recoverable by reading,
+      // never by sending the redemption request again.
+      let receipt: Receipt | undefined;
+      try {
+        receipt = JSON.parse(
+          fs.readFileSync(
+            path.join(this.directory, operation.confirmationToken + ".json"),
+            "utf8",
+          ),
+        );
+      } catch {
+        /* fail closed below */
+      }
+      if (receipt?.email === email && receipt.actor === actor && receipt.result)
+        return { ...receipt.result, replayed: true };
+    }
+    fail(
+      409,
+      "operation_unresolved",
+      "Previous operation is running or incomplete; keep the same key and reconcile before another attempt",
+    );
   }
   async redeem(email: string, actor: string, token: string): Promise<Outcome> {
     const a = this.account(email);

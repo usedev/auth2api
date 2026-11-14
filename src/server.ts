@@ -304,6 +304,48 @@ export function createServer(
     }
   });
 
+  app.post("/admin/reset-credits/redeem-next", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const body = req.body;
+    const operationKey = req.get("Idempotency-Key");
+    if (
+      Object.keys(req.query).length ||
+      !req.is("application/json") ||
+      !body ||
+      typeof body !== "object" ||
+      Array.isArray(body) ||
+      Object.keys(body).some(
+        (key) => !["provider", "email", "confirm"].includes(key),
+      ) ||
+      body.confirm !== true ||
+      !resetInput({ provider: body.provider, email: body.email }, false) ||
+      typeof operationKey !== "string" ||
+      !/^[A-Za-z0-9_-]{16,128}$/.test(operationKey)
+    ) {
+      res
+        .status(400)
+        .json({
+          error: {
+            message:
+              "JSON anthropic provider, email, confirm:true and a 16-128 character Idempotency-Key required; unknown fields rejected",
+          },
+        });
+      return;
+    }
+    try {
+      const outcome = await getResetCredits().redeemNext(
+        body.email,
+        hashApiKey(extractApiKey(req.headers)!),
+        operationKey,
+      );
+      if (!outcome.replayed)
+        subscriptionUsage.invalidate("anthropic", body.email);
+      res.status(outcome.outcome === "unknown" ? 202 : 200).json(outcome);
+    } catch (err) {
+      resetError(res, err);
+    }
+  });
+
   app.get("/admin/usage", async (req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     const { provider, email, refresh, includeResetCredits } = req.query;

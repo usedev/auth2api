@@ -18,6 +18,7 @@ const permitted = new Set([
   "GET /admin/usage",
   "GET /admin/reset-credits",
   "POST /admin/reset-credits/redeem",
+  "POST /admin/reset-credits/redeem-next",
 ]);
 app.use(async (req, res, next) => {
   if (!permitted.has(`${req.method} ${req.path}`)) {
