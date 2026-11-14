@@ -280,7 +280,7 @@ test("cc-switch extractor presents each window as percent and never fabricates m
     );
     assert.equal(
       script.request.url,
-      "http://localhost:8317/admin/usage?provider=anthropic",
+      "http://localhost:8317/admin/usage?provider=anthropic&includeResetCredits=true",
     );
     const results = script.extractor({
       accounts: [

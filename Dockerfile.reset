@@ -1,0 +1,4 @@
+# Build dist with npm run build first. Reuses the installed runtime/dependencies.
+FROM auth2api-auth2api:latest
+COPY dist/ /app/dist/
+CMD ["node", "dist/reset-admin.js", "--config=/config/config.yaml"]

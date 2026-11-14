@@ -1,0 +1,35 @@
+services:
+  reset-admin:
+    image: auth2api-reset-admin:dev
+    container_name: auth2api-reset-admin
+    ports:
+      - "8081:8318"
+    environment:
+      ADMIN_PORT: "8318"
+      RESET_STATE_DIR: /state
+      NODE_ENV: production
+    volumes:
+      - /data/auth2api/config.yaml:/config/config.yaml:ro
+      - production-accounts:/data:ro
+      - /data/auth2api-reset-state:/state
+    networks:
+      - production-proxy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cpus: 0.5
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8318/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+volumes:
+  production-accounts:
+    external: true
+    name: auth2api_auth-data
+networks:
+  production-proxy:
+    external: true
+    name: auth2api_default

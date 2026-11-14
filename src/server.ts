@@ -47,6 +47,7 @@ export function createServer(
   config: Config,
   registry: ProviderRegistry,
   statsRecorder?: StatsRecorder,
+  resetStateDir?: string,
 ): express.Application {
   const app = express();
   const subscriptionUsage = new SubscriptionUsageService(config);
@@ -55,7 +56,7 @@ export function createServer(
     (resetCredits ??= new ClaudeResetService(
       config,
       registry.get("anthropic").manager,
-      resolveAuthDir(config["auth-dir"]),
+      resetStateDir ?? resolveAuthDir(config["auth-dir"]),
     ));
 
   app.use(express.json({ limit: config["body-limit"] }));
@@ -305,10 +306,13 @@ export function createServer(
 
   app.get("/admin/usage", async (req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
-    const { provider, email, refresh } = req.query;
+    const { provider, email, refresh, includeResetCredits } = req.query;
     if (
       Object.keys(req.query).some(
-        (key) => !["provider", "email", "refresh"].includes(key),
+        (key) =>
+          !["provider", "email", "refresh", "includeResetCredits"].includes(
+            key,
+          ),
       ) ||
       (provider !== undefined &&
         (typeof provider !== "string" ||
@@ -317,7 +321,11 @@ export function createServer(
         (typeof email !== "string" ||
           !email.trim() ||
           email !== email.trim())) ||
-      (refresh !== undefined && refresh !== "true" && refresh !== "false")
+      (refresh !== undefined && refresh !== "true" && refresh !== "false") ||
+      (includeResetCredits !== undefined &&
+        includeResetCredits !== "true" &&
+        includeResetCredits !== "false") ||
+      (includeResetCredits === "true" && provider !== "anthropic")
     ) {
       res.status(400).json({
         error: {
@@ -372,6 +380,31 @@ export function createServer(
               ),
           )),
         );
+      }
+      if (includeResetCredits === "true") {
+        const actor = hashApiKey(extractApiKey(req.headers)!);
+        for (const account of accounts) {
+          try {
+            (
+              account as SubscriptionUsage & { resetCredits?: unknown }
+            ).resetCredits = await getResetCredits().query(
+              account.email,
+              actor,
+            );
+          } catch (err) {
+            (
+              account as SubscriptionUsage & { resetCredits?: unknown }
+            ).resetCredits = {
+              error: {
+                code: err instanceof ResetError ? err.code : "query_failed",
+                message:
+                  err instanceof ResetError
+                    ? err.message
+                    : "Reset credit query failed",
+              },
+            };
+          }
+        }
       }
       res.json({ accounts, generated_at: new Date().toISOString() });
     } catch (err) {

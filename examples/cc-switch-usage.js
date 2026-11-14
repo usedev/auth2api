@@ -2,7 +2,7 @@
   request: {
     url:
       "{{baseUrl}}".replace(/\/+$/, "").replace(/\/v1$/, "") +
-      "/admin/usage?provider=anthropic",
+      "/admin/usage?provider=anthropic&includeResetCredits=true",
     method: "GET",
     headers: {
       Authorization: "Bearer {{apiKey}}",
@@ -71,6 +71,52 @@
     var results = [];
     response.accounts.forEach(function (account, accountIndex) {
       var label = account.provider + " / " + account.email;
+      // Query only. Never POST or redeem a confirmation from this script.
+      var cards = account.resetCredits;
+      var cardSuffix =
+        response.accounts.length > 1 ? " #" + (accountIndex + 1) : "";
+      if (cards) {
+        if (cards.error) {
+          results.push({
+            planName: "重置卡" + cardSuffix,
+            isValid: false,
+            invalidMessage: cards.error.message || "重置卡查询失败",
+          });
+        } else if (Array.isArray(cards.credits) && cards.credits.length === 0) {
+          results.push({
+            planName: "重置卡" + cardSuffix,
+            isValid: true,
+            remaining: 0,
+            unit: "次",
+            extra: "当前账号无有效重置卡",
+          });
+        } else if (Array.isArray(cards.credits)) {
+          cards.credits.forEach(function (card) {
+            var scopes = {
+              five_hour: "当前会话",
+              seven_day: "整周",
+              seven_day_overage_included: "Fable",
+            };
+            results.push({
+              planName: (card.label || "重置卡") + cardSuffix,
+              isValid: typeof card.resetsLeft === "number",
+              remaining: card.resetsLeft,
+              unit: "次",
+              extra:
+                (card.redeemable ? "可手动使用" : "暂不可使用") +
+                " · 到期 " +
+                beijingTime(card.expiresAt) +
+                " · 范围: " +
+                (card.clears || [])
+                  .map(function (name) {
+                    return scopes[name] || name;
+                  })
+                  .join("、"),
+            });
+          });
+        }
+      }
+
       if (account.error || !account.supported) {
         results.push({
           planName: label,

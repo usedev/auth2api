@@ -384,3 +384,90 @@ test("reset invalidation prevents an older in-flight usage response from repopul
     f.cleanup();
   }
 });
+
+test("cc-switch reset cards display counts, expiry and usability without redeeming", async () => {
+  const vm = await import("node:vm");
+  const source = fs.readFileSync(
+    path.join(__dirname, "../examples/cc-switch-usage.js"),
+    "utf8",
+  );
+  const script = vm.runInNewContext(source);
+  assert.equal(script.request.method, "GET");
+  assert.match(script.request.url, /includeResetCredits=true/);
+  assert.doesNotMatch(source, /reset-credits\/redeem/);
+  const a = { provider: "anthropic", email: "a", supported: true, windows: [] };
+  const rows = script.extractor({
+    accounts: [
+      {
+        ...a,
+        resetCredits: {
+          credits: [
+            {
+              label: "Fable reset",
+              resetsLeft: 2,
+              redeemable: false,
+              expiresAt: "2027-03-09T07:59:00Z",
+              clears: ["five_hour", "seven_day_overage_included"],
+            },
+          ],
+        },
+      },
+    ],
+  });
+  assert.equal(rows[0].remaining, 2);
+  assert.equal(rows[0].unit, "次");
+  assert.match(rows[0].extra, /暂不可使用/);
+  assert.match(rows[0].extra, /2027-03-09 15:59:00/);
+  assert.match(rows[0].extra, /当前会话、Fable/);
+  assert.equal(
+    script.extractor({ accounts: [{ ...a, resetCredits: { credits: [] } }] })[0]
+      .remaining,
+    0,
+  );
+  assert.equal(
+    script.extractor({
+      accounts: [{ ...a, resetCredits: { error: { message: "unavailable" } } }],
+    })[0].isValid,
+    false,
+  );
+});
+
+test("usage can include reset cards and rejects cross-provider card queries", async () => {
+  const f = fixture(),
+    original = globalThis.fetch;
+  globalThis.fetch = async (url, init) =>
+    String(url) === "https://api.anthropic.com/api/oauth/usage"
+      ? Response.json({ five_hour: { utilization: 20 } })
+      : f.fetcher(url, init);
+  const server = http.createServer(createServer(f.config, f.registry));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    headers = { Authorization: "Bearer test-key" };
+  try {
+    assert.equal(
+      (
+        await original(
+          base + "/admin/usage?provider=codex&includeResetCredits=true",
+          { headers },
+        )
+      ).status,
+      400,
+    );
+    assert.equal(f.calls.length, 0);
+    const response = await original(
+      base +
+        "/admin/usage?provider=anthropic&email=a%40test.local&includeResetCredits=true",
+      { headers },
+    );
+    const data: any = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(data.accounts[0].resetCredits.heldCount, 3);
+    assert.equal(data.accounts[0].windows[0].remainingPercent, 80);
+    assert.equal(f.calls.filter((c) => c.init?.method === "POST").length, 0);
+  } finally {
+    globalThis.fetch = original;
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    f.cleanup();
+  }
+});
