@@ -172,7 +172,14 @@ async function startServer(config: Config): Promise<void> {
     statsRecorder.start(authDir);
   }
 
-  const app = createServer(config, registry, statsRecorder);
+  const app = createServer(
+    config,
+    registry,
+    statsRecorder,
+    process.env.RESET_STATE_DIR
+      ? resolveAuthDir(process.env.RESET_STATE_DIR)
+      : undefined,
+  );
   const host = config.host || "127.0.0.1";
   const port = config.port;
 

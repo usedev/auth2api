@@ -338,6 +338,8 @@ Each account snapshot carries availability, cooldown, failure counters, last ref
 
 ### Claude reset credits
 
+The main server supports `RESET_STATE_DIR` for durable reset operation records (defaults to auth-dir). When replacing an isolated admin instance, mount its existing state directory and set this variable to preserve confirmations, organization locks and deduplication. The current server uses port 8080; the temporary 8081 service is retired.
+
 Authenticated `GET /admin/reset-credits?provider=anthropic&email=<encoded-email>` returns held/available counts and credit metadata. Only currently redeemable credits receive a five-minute `confirmationToken`. OAuth profile access is required and enforced upstream.
 
 One-step manual redemption: `POST /admin/reset-credits/redeem-next` accepts JSON `{ "provider": "anthropic", "email": "account@example.com", "confirm": true }` plus a required `Idempotency-Key` header (16–128 letters/digits/underscores/hyphens). It queries and durably binds the unique redeemable card before calling the existing redemption path. Replays preserve the selected card/result; no-card rejections are also retained. Keep the same key for retries, and use a new key only for a new deliberate redemption. Interrupted/unknown operations fail closed and must not be bypassed with a fresh key. The query-only cc-switch script never calls this endpoint. See [single-curl examples](examples/reset-credits-curl.md).
