@@ -172,7 +172,14 @@ export class SubscriptionUsageService {
     { key: string; expires: number; value: SubscriptionUsage }
   >();
   private pending = new Map<string, Promise<SubscriptionUsage>>();
+  private cacheEpoch = 0;
   constructor(private config: Config) {}
+
+  invalidate(provider: ProviderId, email: string): void {
+    this.cache.delete(JSON.stringify([provider, email]));
+    this.cacheEpoch++;
+    this.pending.clear();
+  }
 
   async query(
     manager: AccountManager,
@@ -235,8 +242,10 @@ export class SubscriptionUsageService {
       return { ...hit.value, cached: true };
     const pending = this.pending.get(key);
     if (pending) return pending;
+    const epoch = this.cacheEpoch;
     const task = this.fetch(account, base)
       .then((value) => {
+        if (epoch !== this.cacheEpoch) return value;
         this.cache.set(identity, {
           key,
           expires: Date.now() + (value.error ? 15000 : 60000),
@@ -244,7 +253,9 @@ export class SubscriptionUsageService {
         });
         return value;
       })
-      .finally(() => this.pending.delete(key));
+      .finally(() => {
+        if (this.pending.get(key) === task) this.pending.delete(key);
+      });
     this.pending.set(key, task);
     return task;
   }

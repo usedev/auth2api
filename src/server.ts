@@ -1,5 +1,6 @@
 import express from "express";
-import { Config, isDebugLevel } from "./config";
+import { ClaudeResetService, ResetError } from "./usage/reset-credits";
+import { Config, isDebugLevel, resolveAuthDir } from "./config";
 import { ProviderRegistry } from "./providers/registry";
 import { extractApiKey, hashApiKey } from "./utils/common";
 import {
@@ -49,6 +50,13 @@ export function createServer(
 ): express.Application {
   const app = express();
   const subscriptionUsage = new SubscriptionUsageService(config);
+  let resetCredits: ClaudeResetService | undefined;
+  const getResetCredits = () =>
+    (resetCredits ??= new ClaudeResetService(
+      config,
+      registry.get("anthropic").manager,
+      resolveAuthDir(config["auth-dir"]),
+    ));
 
   app.use(express.json({ limit: config["body-limit"] }));
 
@@ -212,6 +220,89 @@ export function createServer(
     });
   });
 
+  // Explicit account + provider selection, no implicit account rotation.
+  const resetInput = (value: any, redeem: boolean): boolean => {
+    const keys = redeem
+      ? ["provider", "email", "confirm", "confirmationToken"]
+      : ["provider", "email"];
+    return (
+      !!value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value).every((key) => keys.includes(key)) &&
+      value.provider === "anthropic" &&
+      typeof value.email === "string" &&
+      value.email.length > 0 &&
+      value.email === value.email.trim() &&
+      (!redeem ||
+        (value.confirm === true &&
+          typeof value.confirmationToken === "string" &&
+          /^[a-f0-9]{64}$/.test(value.confirmationToken)))
+    );
+  };
+  const resetError = (res: express.Response, err: unknown) => {
+    res.status(err instanceof ResetError ? err.status : 503).json({
+      error: {
+        code:
+          err instanceof ResetError ? err.code : "reset_storage_unavailable",
+        message:
+          err instanceof ResetError
+            ? err.message
+            : "Reset operation unavailable; no automatic retry",
+      },
+    });
+  };
+  app.get("/admin/reset-credits", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (!resetInput(req.query, false)) {
+      res.status(400).json({
+        error: {
+          message:
+            "Explicit anthropic provider and account email required; unknown parameters rejected",
+        },
+      });
+      return;
+    }
+    try {
+      res.json(
+        await getResetCredits().query(
+          req.query.email as string,
+          hashApiKey(extractApiKey(req.headers)!),
+        ),
+      );
+    } catch (err) {
+      resetError(res, err);
+    }
+  });
+  app.post("/admin/reset-credits/redeem", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (
+      Object.keys(req.query).length ||
+      !req.is("application/json") ||
+      !resetInput(req.body, true)
+    ) {
+      res.status(400).json({
+        error: {
+          message:
+            "JSON provider, email, confirm:true and confirmationToken required; unknown fields rejected",
+        },
+      });
+      return;
+    }
+    try {
+      const outcome = await getResetCredits().redeem(
+        req.body.email,
+        hashApiKey(extractApiKey(req.headers)!),
+        req.body.confirmationToken,
+      );
+      if (!outcome.replayed)
+        subscriptionUsage.invalidate("anthropic", req.body.email);
+      res.status(outcome.outcome === "unknown" ? 202 : 200).json(outcome);
+    } catch (err) {
+      resetError(res, err);
+    }
+  });
+
   app.get("/admin/usage", async (req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     const { provider, email, refresh } = req.query;
@@ -254,14 +345,12 @@ export function createServer(
               p.manager.getSnapshots().some((a) => a.email === email),
             )
         ) {
-          res
-            .status(400)
-            .json({
-              error: {
-                code: "provider_mismatch",
-                message: "Account does not belong to the requested provider",
-              },
-            });
+          res.status(400).json({
+            error: {
+              code: "provider_mismatch",
+              message: "Account does not belong to the requested provider",
+            },
+          });
           return;
         }
         res.status(404).json({ error: { message: "Account not found" } });

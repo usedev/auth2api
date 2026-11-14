@@ -361,6 +361,29 @@ curl 'http://127.0.0.1:8317/admin/usage?provider=codex' \
 
 脚本默认使用紧凑布局：当前会话／本周／Fable（仅上游返回时）窗口名、已用比例和北京时间重置提示；多个账号以 #1、#2 区分。自定义模板的余额及进度条仍由 cc-switch 按剩余比例绘制。需要倒计时、更新时间、账号、订阅和积分等完整信息时，将脚本中的 `showDetails` 改为 `true`。每个账号的各窗口分别以 `%` 展示，附已用比例、重置倒计时、账号、北京时间（UTC+8）的重置时间和查询时间、缓存标记；订阅类型和积分余额仅在上游返回时展示。倒计时按脚本执行时刻估算，不会每秒更新；到期会提示刷新确认，不自动把剩余额度改为 100%。上游未返回数据或查询失败会明确显示错误，不会伪装成额度充足。本接口沿用现有 `/admin` 的 API key 权限；持有该 key 的客户端可以查询池内账号邮箱和额度。
 
+### Claude 重置卡（查询与显式兑换）
+
+这两个接口沿用管理 API key 鉴权，只接受 `provider=anthropic` 和明确的账号邮箱，不自动挑选账号。不支持 Codex/Cursor，不会由定时器、模型请求或 cc-switch 用量脚本触发兑换。
+
+查询：`GET /admin/reset-credits?provider=anthropic&email=<URL编码邮箱>`。请求上游 `GET /api/oauth/usage?cedar_ember=1&skip_spend=1`，返回 `heldCount`（有效持有次数）、`availableCount`（此刻可兑换次数）和 `credits[]`。每张卡包含名称、剩余次数、开始/过期时间、重置范围及 `redeemable`；只有满足上游资格、未过期、未暂停、无阻塞/冷却且为上游 next grant 的卡才会附带 5 分钟有效的 `confirmationToken`。两种次数口径不同，不把“持有”伪装成“立即可用”。账号需具备上游 OAuth profile 权限；已有凭据未存储 scope，由上游鉴权决定是否可访问。
+
+**兑换会真实消耗一张卡**：人工核对查询结果的账号、卡片和 `clears` 后，使用同一个 API key 调用 `POST /admin/reset-credits/redeem`，JSON 请求体必须为：
+
+```json
+{
+  "provider": "anthropic",
+  "email": "your-account@example.com",
+  "confirm": true,
+  "confirmationToken": "查询返回的确认凭据"
+}
+```
+
+兑换时通过 OAuth profile 获取组织 UUID，再重新查询资格和卡片快照；不会接受客户端提供的组织/卡片 ID、URL 或任意上游参数。凭据改变、卡片变化、确认过期都会拒绝。固定 HTTPS 地址、禁止重定向、走现有代理，无自动重试和自动 token 刷新。请求头按 sub2api 的重置接口实现构造（OAuth beta、`x-app: cli`、`claude-cli/<配置版本> (external, cli)`），不透传客户端请求头。
+
+结果为 `reset`、`already_used`、`not_limited`、`cooldown`、`ineligible` 或 `unknown`；只有 `reset` 表示上游明确成功。`unknown` 返回 HTTP 202，表示结果未确认，绝不能当成未消费后直接重试。已处理的确认再次提交会重放结果；每个组织的持久化锁防止重复账号并发消耗。其他确认在上次兑换之前生成也会失效。兑换后本地用量缓存失效，模型账号的冷却/路由状态不做修改。
+
+确认记录及组织锁保存于 `<auth-dir>/reset-operations/`，文件权限 0600、目录 0700。发送 POST 前先持久化未知结果，进程崩溃、超时或无法确认结果时保留锁；**不会自动解锁**。需要管理员在上游核实兑换结果后人工处理，不能盲删锁。各实例必须共享同一个支持原子目录创建/重命名及 fsync 的本地持久化目录；不同存储卷的独立部署不具备跨实例去重。确认记录保留用于去重，不会自动清理，也不要将该目录发布到仓库。
+
 ### 在不停机的情况下重新登录
 
 服务运行中跑 `--login` 会写入新 token 文件并**自动通知运行中的服务**(POST `/admin/reload`),新 token 立刻生效,不必重启。对 codex provider 尤其重要:OpenAI 每次刷新都会轮转 refresh token,如果不重载,运行中的服务还在用旧的 refresh token,刷新会被后端识别为 `refresh_token_reused`,导致账号进入终态冷却。

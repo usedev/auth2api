@@ -336,6 +336,14 @@ Response shape (one entry per logged-in provider):
 
 Each account snapshot carries availability, cooldown, failure counters, last refresh time, request statistics, and per-account token usage including `totalReasoningOutputTokens` (reasoning models like `gpt-5.5` consume hidden reasoning tokens that aren't part of the visible output). Codex accounts also carry `planType` (e.g. `"plus"` / `"pro"` / `"free"`) extracted from the OAuth `id_token`. If a refresh token was permanently invalidated (`refresh_token_reused`/`expired`/`invalidated`), the account enters a 24-hour terminal cooldown with `lastError` set to a message pointing at `--login --provider=<provider>` for re-authorization.
 
+### Claude reset credits
+
+Authenticated `GET /admin/reset-credits?provider=anthropic&email=<encoded-email>` returns held/available counts and credit metadata. Only currently redeemable credits receive a five-minute `confirmationToken`. OAuth profile access is required and enforced upstream.
+
+After reviewing the exact account, credit and reset scope, explicitly call `POST /admin/reset-credits/redeem` with JSON `{ "provider": "anthropic", "email": "account@example.com", "confirm": true, "confirmationToken": "..." }` and the same API key. **This consumes a real reset credit.** The server obtains the organization from OAuth profile and rechecks the grant before a single POST. It never accepts caller-provided upstream URLs, organization IDs or grant IDs. No scheduler, usage script, automatic retry or token refresh triggers redemption.
+
+Results are `reset`, `already_used`, `not_limited`, `cooldown`, `ineligible`, or HTTP 202 `unknown`. Only `reset` confirms success. Durable confirmation records and organization locks in `<auth-dir>/reset-operations/` prevent replay across restarts and duplicate account entries; confirmations created before the previous operation are invalidated. Unknown outcomes and interrupted attempts leave a lock that requires manual reconciliation against upstream state; never blindly remove it or retry. Storage failures fail closed. Instances must share the same persistent local filesystem supporting atomic directory creation/rename and fsync; separate storage volumes do not coordinate. Records are retained for deduplication. Successful or uncertain attempts invalidate usage caches without changing account routing/cooldown. See the Chinese README for the full contract and header policy.
+
 ### Upstream subscription usage and cc-switch
 
 `GET /admin/usage` queries upstream subscription limits for Codex and Anthropic OAuth accounts, separately from local `/admin/stats` token accounting. Cursor returns `unsupported`.
