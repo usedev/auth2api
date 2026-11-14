@@ -363,9 +363,9 @@ curl 'http://127.0.0.1:8317/admin/usage?provider=codex' \
 
 ### Claude 重置卡（查询与显式兑换）
 
-主服务已集成查询与兑换。`RESET_STATE_DIR` 可指定重置操作记录根目录（未设置则使用 auth-dir）；从临时实例切换时必须挂载原目录并指定该变量，保留确认记录、组织锁和去重状态。当前服务器保留 8080，临时 8081 撤下；cc-switch 用量查询地址恢复主服务地址。
+主服务已集成查询与兑换。`RESET_STATE_DIR` 可指定重置操作记录根目录（未设置则使用 auth-dir）；从临时实例切换时必须挂载原目录并指定该变量，保留确认记录、组织锁和去重状态。cc-switch 的用量查询地址使用实际提供这些接口的服务地址。
 
-独立部署使用 `src/reset-admin.ts` 和 `docker-compose.reset.yml`：8081 仅提供管理查询/兑换，原 8080 模型服务不受影响。账号卷只读、重置操作记录单独挂载到 `/state`，不启动后台 OAuth 刷新或模型服务。使用前先构建 dist，再通过 `Dockerfile.reset` 构建独立镜像；不要重建原服务。示例部署文件使用本项目服务器路径、已有 Docker 网络和账号卷名称，其他环境需自行调整。
+可选的独立管理入口 `src/reset-admin.ts` 仅提供查询和兑换，不启动后台 OAuth 刷新或模型服务。通过 `ADMIN_PORT` 设置监听端口，通过 `RESET_STATE_DIR` 指定持久化状态目录。独立部署时账号文件应只读挂载；具体端口、配置路径、网络和存储挂载由部署环境提供，不存放在公开仓库。
 
 [手动查询和兑换 curl](examples/reset-credits-curl.md)。cc-switch 示例通过 `includeResetCredits=true` 同时显示重置卡，参数仅允许与显式 `provider=anthropic` 一起使用；重置卡查询失败单独显示，不隐藏模型用量。独立测试部署时才将 cc-switch 用量查询地址填新端口，模型请求地址保持主服务。自动查询间隔设为 0。
 

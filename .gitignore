@@ -13,3 +13,7 @@ config.yaml
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Machine-specific deployment files (keep on the deployment host only)
+Dockerfile.reset
+docker-compose.reset.yml

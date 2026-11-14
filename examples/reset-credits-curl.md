@@ -1,11 +1,11 @@
 # 手动查询与兑换 Claude 重置卡
 
-查询与兑换接口已集成到主服务：`https://ai-dev.nana.cn`（服务器端口 8080）。临时 8081 服务已撤下。cc-switch 的「用量查询 → 请求地址」使用主服务地址，粘贴 `cc-switch-usage.js`，自动查询间隔设为 0。
+查询与兑换接口由 auth2api 服务提供。下列地址均为示例，请替换为你的服务地址；cc-switch 的用量查询地址可独立配置，避免误改模型请求地址。粘贴 `cc-switch-usage.js` 后，将自动查询间隔设为 0 可关闭定时查询。
 
 在你的终端准备变量（替换占位符，API_KEY 使用现有 auth2api key）：
 
 ```bash
-BASE_URL='https://ai-dev.nana.cn'
+BASE_URL='https://your-auth2api.example'
 API_KEY='你的auth2api API key'
 ACCOUNT_EMAIL='你的Claude账号邮箱'
 ```
@@ -18,7 +18,7 @@ ACCOUNT_EMAIL='你的Claude账号邮箱'
 
 ```bash
 curl --fail-with-body --max-time 120 \
-  'https://ai-dev.nana.cn/admin/reset-credits/redeem-next' \
+  'https://your-auth2api.example/admin/reset-credits/redeem-next' \
   -H 'Authorization: Bearer 你的auth2api_API_KEY' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: reset-20261114-001' \

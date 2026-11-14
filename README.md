@@ -338,7 +338,7 @@ Each account snapshot carries availability, cooldown, failure counters, last ref
 
 ### Claude reset credits
 
-The main server supports `RESET_STATE_DIR` for durable reset operation records (defaults to auth-dir). When replacing an isolated admin instance, mount its existing state directory and set this variable to preserve confirmations, organization locks and deduplication. The current server uses port 8080; the temporary 8081 service is retired.
+The main server supports `RESET_STATE_DIR` for durable reset operation records (defaults to auth-dir). When replacing an isolated admin instance, mount its existing state directory and set this variable to preserve confirmations, organization locks and deduplication.
 
 Authenticated `GET /admin/reset-credits?provider=anthropic&email=<encoded-email>` returns held/available counts and credit metadata. Only currently redeemable credits receive a five-minute `confirmationToken`. OAuth profile access is required and enforced upstream.
 
