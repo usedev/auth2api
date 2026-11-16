@@ -273,9 +273,22 @@ Decoder 会把 Cursor 上游的 chain-of-thought（reasoning）字节路由到 `
 
 ## Docker
 
+确保 `config.yaml` 已存在（没有则复制 `config.example.yaml`），并设置以下 Docker 配置；`api-keys` 请填写自己的密钥：
+
+```yaml
+host: "0.0.0.0"
+auth-dir: "/data"
+```
+
 ```bash
 # 构建
 docker build -t auth2api .
+
+# 首次登录（交互模式；token 保存到挂载目录）
+docker run --rm -it \
+  -v ~/.auth2api:/data \
+  -v ./config.yaml:/config/config.yaml \
+  auth2api --login --manual
 
 # 运行（挂载配置文件与 token 目录）
 docker run -d \
@@ -285,11 +298,17 @@ docker run -d \
   auth2api
 ```
 
-或者使用 docker-compose：
+或者使用 Docker Compose（登录与服务共享 `auth-data` 卷）：
 
 ```bash
-docker-compose up -d
+docker compose build
+docker compose run --rm auth2api --login --manual
+docker compose up -d
 ```
+
+默认登录 Claude；登录 ChatGPT / Codex 时在登录命令末尾添加 `--provider=codex`。在浏览器打开输出的链接，授权后将地址栏的完整回调 URL 粘贴回终端；localhost 页面打不开也没关系，手动模式无需映射回调端口。首次授权完成后再启动服务，否则服务会因没有账号而退出。
+
+镜像会自动补齐启动命令和默认配置路径；也可通过 `--config=/path/to/config.yaml` 指定容器内的其他配置文件。已有镜像需要重新构建才能使用简写。
 
 ## 与 Claude Code 配合使用
 

@@ -273,9 +273,22 @@ The decoder routes Cursor's chain-of-thought (`reasoning`) bytes to `response.re
 
 ## Docker
 
+Ensure `config.yaml` exists (copy `config.example.yaml` if needed), set the following Docker options, and replace `api-keys` with your own key:
+
+```yaml
+host: "0.0.0.0"
+auth-dir: "/data"
+```
+
 ```bash
 # Build
 docker build -t auth2api .
+
+# First login (interactive; tokens are saved in the mounted directory)
+docker run --rm -it \
+  -v ~/.auth2api:/data \
+  -v ./config.yaml:/config/config.yaml \
+  auth2api --login --manual
 
 # Run (mount your config and token directory)
 docker run -d \
@@ -285,11 +298,17 @@ docker run -d \
   auth2api
 ```
 
-Or with docker-compose:
+Or use Docker Compose (login and the server share the `auth-data` volume):
 
 ```bash
-docker-compose up -d
+docker compose build
+docker compose run --rm auth2api --login --manual
+docker compose up -d
 ```
+
+Login defaults to Claude; append `--provider=codex` to the login command for ChatGPT / Codex. Open the printed link in your browser, then paste the full callback URL from the address bar into the terminal. The localhost page may fail to load; manual mode needs no callback port mappings. Complete the first login before starting the server, which otherwise exits because no accounts are available.
+
+The image supplies the startup command and default configuration path automatically. Use `--config=/path/to/config.yaml` to select another configuration file inside the container. Rebuild existing images to use the shorter commands.
 
 ## Use with Claude Code
 
